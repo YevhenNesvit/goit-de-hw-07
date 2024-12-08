@@ -1,5 +1,5 @@
 from airflow import DAG
-from airflow.providers.mysql.operators.mysql import MySqlOperator
+from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from airflow.operators.python import PythonOperator, BranchPythonOperator
 from airflow.providers.common.sql.sensors.sql import SqlSensor
 import random
@@ -28,9 +28,9 @@ with DAG(
 ) as dag:
 
     # Завдання 1: створення таблиці
-    create_table = MySqlOperator(
+    create_table = SQLExecuteQueryOperator(
         task_id='create_table',
-        mysql_conn_id='neo_data',  # Заздалегідь налаштоване з’єднання
+        conn_id='neo_data',  # Заздалегідь налаштоване з’єднання
         sql="""
             CREATE TABLE IF NOT EXISTS olympic_results_nesvit (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -51,6 +51,11 @@ with DAG(
         else:
             return 'calc_Gold'
 
+    pick_medal = PythonOperator(
+        task_id='pick_medal',
+        python_callable=choose_medal_type
+    )
+
     choose_medal = BranchPythonOperator(
         task_id='pick_medal_task',
         python_callable=branch_medal_choice,
@@ -58,9 +63,9 @@ with DAG(
     )
 
     # Завдання 3: обчислення для кожного типу медалі
-    calc_Bronze = MySqlOperator(
+    calc_Bronze = SQLExecuteQueryOperator(
         task_id='calc_Bronze',
-        mysql_conn_id='neo_data',
+        conn_id='neo_data',
         sql="""
             INSERT INTO olympic_results_nesvit (medal_type, count, created_at)
             SELECT 'Bronze', COUNT(*), NOW()
@@ -69,9 +74,9 @@ with DAG(
         """
     )
 
-    calc_Silver = MySqlOperator(
+    calc_Silver = SQLExecuteQueryOperator(
         task_id='calc_Silver',
-        mysql_conn_id='neo_data',
+        conn_id='neo_data',
         sql="""
             INSERT INTO olympic_results_nesvit (medal_type, count, created_at)
             SELECT 'Silver', COUNT(*), NOW()
@@ -80,9 +85,9 @@ with DAG(
         """
     )
 
-    calc_Gold = MySqlOperator(
+    calc_Gold = SQLExecuteQueryOperator(
         task_id='calc_Gold',
-        mysql_conn_id='neo_data',
+        conn_id='neo_data',
         sql="""
             INSERT INTO olympic_results_nesvit (medal_type, count, created_at)
             SELECT 'Gold', COUNT(*), NOW()
@@ -93,7 +98,7 @@ with DAG(
 
     # Завдання 4: затримка
     delay_task = PythonOperator(
-        task_id='add_delay',
+        task_id='generate_delay',
         python_callable=add_delay,
         trigger_rule='one_success',  # Виконується, якщо успішно завершено хоча б одне попереднє завдання
     )
@@ -109,10 +114,10 @@ with DAG(
             ORDER BY created_at DESC
             LIMIT 1;
         """,
-        timeout=60,
+        timeout=30,
         poke_interval=5,
         mode='poke',
     )
 
     # Побудова DAG
-    create_table >> choose_medal >> [calc_Bronze, calc_Silver, calc_Gold] >> delay_task >> check_latest_record
+    create_table >> pick_medal >> choose_medal >> [calc_Bronze, calc_Silver, calc_Gold] >> delay_task >> check_latest_record
